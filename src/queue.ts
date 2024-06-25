@@ -1,26 +1,39 @@
-import { Queue, Worker, QueueScheduler } from 'bullmq';
+import { Queue, Worker, QueueEvents, Job } from 'bullmq';
 import { processEmails } from './processor';
-import { redisConfig } from './redis';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const emailQueue = new Queue('emailQueue', { connection: redisConfig });
-const emailQueueScheduler = new QueueScheduler('emailQueue', { connection: redisConfig });
+// Define the Redis connection configuration
+const redisConfig = {
+  host: process.env.REDIS_HOST || 'localhost',
+  port: parseInt(process.env.REDIS_PORT || '6379', 10),
+  password: process.env.REDIS_PASSWORD || undefined, // Password can be undefined if not required
+};
 
-const worker = new Worker('emailQueue', async job => {
+// Create instances of Queue, Worker, and QueueEvents
+const emailQueue = new Queue('emailQueue', { connection: redisConfig });
+const emailQueueScheduler = new QueueEvents('emailQueue', { connection: redisConfig });
+
+const worker = new Worker('emailQueue', async (job: Job) => {
   const { email, provider } = job.data;
   await processEmails(email, provider);
 }, { connection: redisConfig });
 
-worker.on('completed', job => {
+// Event listeners for job completion and failure
+worker.on('completed', (job: Job) => {
   console.log(`Job with id ${job.id} has been completed`);
 });
 
-worker.on('failed', (job, err) => {
-  console.log(`Job with id ${job.id} has failed with error ${err.message}`);
+worker.on('failed', (job: Job | undefined, err: Error, prev: string) => {
+  if (job) {
+    console.log(`Job with id ${job.id} has failed with error ${err.message}`);
+  } else {
+    console.log(`Job is undefined, failed with error ${err.message}`);
+  }
 });
 
+// Function to add jobs to the queue
 export const addEmailToQueue = async (email: string, provider: string) => {
   await emailQueue.add('processEmail', { email, provider });
 };
